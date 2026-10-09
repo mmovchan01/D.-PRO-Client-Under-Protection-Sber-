@@ -44,6 +44,96 @@ def set_global_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
+def generate_features(data: pd.DataFrame) -> pd.DataFrame:
+    """Generate domain-specific engineered features.
+
+    1. Cross-interactions of risks and insurances:
+       - property_exposure = crime_rate * (1 - property_insurance)
+       - cyber_exposure = cyber_risk * (1 - cyber_protection)
+
+    2. Digital vulnerability index:
+       - cyber_vulnerability = digital_behavior_score * (3 - (password_manager + two_factor_auth + security_training))
+
+    3. Financial leverage and credit load:
+       - income_to_balance_ratio = average_balance / (income + 1)
+       - credit_load_ratio = loan_amount / (income + 1)
+
+    4. Digital and policy activity patterns:
+       - digital_channel_ratio = website_visits / (mobile_sessions + 1)
+       - net_active_policies = active_policies - expired_policies
+
+    5. Age patterns:
+       - age_squared = age ** 2
+       - is_young = (age < 25).astype(int)
+    """
+    df = data.copy()
+
+    def _col(name: str) -> pd.Series | None:
+        if name not in df.columns:
+            return None
+        return pd.to_numeric(df[name], errors="coerce")
+
+    # 1. Cross-interactions of risks and insurances
+    crime_rate = _col("crime_rate")
+    property_insurance = _col("property_insurance")
+    if crime_rate is not None and property_insurance is not None:
+        df["property_exposure"] = crime_rate * (1 - property_insurance)
+
+    cyber_risk = _col("cyber_risk")
+    cyber_protection = _col("cyber_protection")
+    if cyber_risk is not None and cyber_protection is not None:
+        df["cyber_exposure"] = cyber_risk * (1 - cyber_protection)
+
+    # 2. Digital vulnerability index
+    digital_behavior_score = _col("digital_behavior_score")
+    password_manager = _col("password_manager")
+    two_factor_auth = _col("two_factor_auth")
+    security_training = _col("security_training")
+    if (
+        digital_behavior_score is not None
+        and password_manager is not None
+        and two_factor_auth is not None
+        and security_training is not None
+    ):
+        df["cyber_vulnerability"] = digital_behavior_score * (
+            3 - (password_manager + two_factor_auth + security_training)
+        )
+
+    # 3. Financial leverage and credit load
+    average_balance = _col("average_balance")
+    income = _col("income")
+    loan_amount = _col("loan_amount")
+    if average_balance is not None and income is not None:
+        df["income_to_balance_ratio"] = average_balance / (income + 1)
+    if loan_amount is not None and income is not None:
+        df["credit_load_ratio"] = loan_amount / (income + 1)
+
+    # 4. Digital and policy activity patterns
+    website_visits = _col("website_visits")
+    mobile_sessions = _col("mobile_sessions")
+    active_policies = _col("active_policies")
+    expired_policies = _col("expired_policies")
+    if website_visits is not None and mobile_sessions is not None:
+        df["digital_channel_ratio"] = website_visits / (mobile_sessions + 1)
+    if active_policies is not None and expired_policies is not None:
+        df["net_active_policies"] = active_policies - expired_policies
+
+    # 5. Age patterns
+    age = _col("age")
+    if age is not None:
+        df["age_squared"] = age**2
+        df["is_young"] = (age < 25).astype(int)
+
+    return df
+
+
+# Aliases for flexibility
+engineer_features = generate_features
+create_features = generate_features
+add_features = generate_features
+add_engineered_features = generate_features
+
+
 def get_numeric_feature_names(data: pd.DataFrame) -> list[str]:
     """Return numeric predictor columns, excluding the ID and the target."""
     excluded = {ID_COLUMN, TARGET_COLUMN}

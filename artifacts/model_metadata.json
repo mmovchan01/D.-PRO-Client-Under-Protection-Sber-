@@ -1,17 +1,35 @@
 {
-  "model_file": "protection_score_logistic.npz",
-  "model_type": "sigmoid-linear index, fit by L-BFGS-B on raw-scale RMSE",
+  "model_file": "fold_preprocessors.npz",
+  "fold_model_files": [
+    "catboost_fold_0.cbm",
+    "catboost_fold_1.cbm",
+    "catboost_fold_2.cbm",
+    "catboost_fold_3.cbm",
+    "catboost_fold_4.cbm"
+  ],
+  "model_type": "CatBoostRegressor 5-fold ensemble (loss=RMSE, depth=5, l2_leaf_reg=30.0)",
   "target": "protection_score",
-  "prediction_formula": "100 * sigmoid(intercept + standardized_numeric_features @ coefficients)",
+  "prediction_formula": "Average of 5 CatBoost fold models, clipped to [0, 100]",
   "seed": 434089,
   "seed_policy": "fixed with --seed",
   "training_rows": 10000,
-  "validation_rows": 2000,
-  "validation_size": 0.2,
-  "validation_rmse": 9.972019918131009,
   "cross_validation": {
     "folds": 5,
-    "oof_rmse": 10.176646065300224
+    "oof_rmse": 10.472857290793312,
+    "fold_rmses": [
+      10.31861263318329,
+      10.397555655389828,
+      10.819912835608722,
+      10.23259584688023,
+      10.585095056268196
+    ],
+    "fold_best_iterations": [
+      499,
+      499,
+      497,
+      496,
+      499
+    ]
   },
   "features": [
     "age",
@@ -65,10 +83,19 @@
     "regional_risk",
     "crime_rate",
     "natural_disaster_risk",
-    "cyber_risk"
+    "cyber_risk",
+    "property_exposure",
+    "cyber_exposure",
+    "cyber_vulnerability",
+    "income_to_balance_ratio",
+    "credit_load_ratio",
+    "digital_channel_ratio",
+    "net_active_policies",
+    "age_squared",
+    "is_young"
   ],
   "imputation": {
-    "numeric": "median of training data",
+    "numeric": "median of training fold",
     "categorical": {
       "region": "Moscow",
       "city_type": "large_city",
@@ -80,33 +107,20 @@
     },
     "categorical_used_by_model": false
   },
-  "parameters": {
-    "feature_count": 52,
-    "l2_alpha": 10000.0,
-    "initial_logit_ridge_alpha": 100.0,
-    "optimizer": "L-BFGS-B",
-    "validation_fit": {
-      "success": true,
-      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
-      "iterations": 23,
-      "objective": 51.73220078606181,
-      "l2_alpha": 10000.0,
-      "initial_logit_ridge_alpha": 100.0
-    },
-    "final_fit": {
-      "success": true,
-      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
-      "iterations": 24,
-      "objective": 51.219365027668275,
-      "l2_alpha": 10000.0,
-      "initial_logit_ridge_alpha": 100.0
-    }
+  "hyperparameters": {
+    "loss_function": "RMSE",
+    "depth": 5,
+    "learning_rate": 0.03,
+    "l2_leaf_reg": 30.0,
+    "n_estimators": 500,
+    "early_stopping_rounds": 50
   },
   "versions": {
     "python": "3.11.2",
     "numpy": "2.1.3",
     "pandas": "2.2.3",
     "scikit_learn": "1.5.2",
-    "scipy": "1.17.1"
+    "scipy": "1.17.1",
+    "catboost": "catboost.core"
   }
 }

@@ -1,12 +1,11 @@
-"""Predict protection_score with the saved model. No training happens here.
+"""Predict protection_score with the saved CatBoost ensemble model. No training happens here.
 
 What it does:
-  1. loads the weights and the imputation values saved by ``train.py``;
-  2. adds any feature column that is absent from the input (filled with the
-     saved median), so a missing column does not stop the run;
-  3. fills NaN and non-numeric values in numeric features with the saved
-     training medians, and NaN in categorical columns with the saved modes;
-  4. writes ``submission_seed_{SEED}.csv`` with the seed from the metadata.
+  1. loads the fold models and preprocessing arrays saved by ``train.py``;
+  2. generates engineered domain features on the test data;
+  3. handles missing features by filling with saved training medians;
+  4. computes predictions from all fold models and averages them (ensemble);
+  5. clips predictions to [0, 100] and writes ``submission_seed_{SEED}.csv``.
 
 Examples:
     python predict.py --input-csv hard_test.csv --model-dir artifacts
@@ -19,15 +18,16 @@ import argparse
 import json
 from pathlib import Path
 
+from catboost import CatBoostRegressor
 import numpy as np
 import pandas as pd
-from scipy.special import expit
 
 from model_utils import (
     CATEGORICAL_COLUMNS,
     ID_COLUMN,
     TARGET_COLUMN,
     ensure_columns,
+    generate_features,
     impute_categorical,
     numeric_matrix,
     set_global_seed,
@@ -47,31 +47,48 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_model(model_dir: Path) -> tuple[dict, dict]:
-    """Return (metadata, arrays) for the saved model, with consistency checks."""
+def load_ensemble(
+    model_dir: Path,
+) -> tuple[
+    dict,
+    list[str],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[CatBoostRegressor],
+    dict[str, str],
+]:
+    """Return metadata, feature names, preprocessing parameters, fold models, and categorical modes."""
     metadata_path = model_dir / "model_metadata.json"
     if not metadata_path.exists():
         raise FileNotFoundError(f"Model metadata not found: {metadata_path}; run train.py first")
     with metadata_path.open(encoding="utf-8") as file:
         metadata = json.load(file)
 
-    model_path = model_dir / metadata["model_file"]
-    if not model_path.exists():
-        raise FileNotFoundError(f"Saved model not found: {model_path}")
-    with np.load(model_path, allow_pickle=False) as saved:
-        arrays = {name: saved[name] for name in saved.files}
+    preprocessor_path = model_dir / "fold_preprocessors.npz"
+    if not preprocessor_path.exists():
+        raise FileNotFoundError(f"Fold preprocessors not found: {preprocessor_path}")
+    with np.load(preprocessor_path, allow_pickle=False) as saved:
+        feature_names = saved["feature_names"].astype(str).tolist()
+        fold_medians = saved["fold_medians"]
+        fold_means = saved["fold_means"]
+        fold_scales = saved["fold_scales"]
+        modes = dict(zip(saved["categorical_columns"].astype(str), saved["categorical_modes"].astype(str)))
 
-    feature_names = arrays["feature_names"].astype(str).tolist()
     if feature_names != metadata["features"]:
         raise ValueError("Model feature names do not match model_metadata.json")
-    if len(feature_names) != len(arrays["coefficients"]):
-        raise ValueError("Saved feature list and coefficient vector have different lengths")
-    for key in ("medians", "means", "scales"):
-        if len(arrays[key]) != len(feature_names):
-            raise ValueError(f"Saved {key!r} has the wrong length")
-    if not np.isfinite(arrays["coefficients"]).all() or not np.isfinite(arrays["intercept"]):
-        raise ValueError("Saved model parameters are not finite")
-    return metadata, arrays
+
+    fold_model_files = metadata["fold_model_files"]
+    models: list[CatBoostRegressor] = []
+    for model_filename in fold_model_files:
+        model_path = model_dir / model_filename
+        if not model_path.exists():
+            raise FileNotFoundError(f"Fold model file not found: {model_path}")
+        cb = CatBoostRegressor()
+        cb.load_model(str(model_path))
+        models.append(cb)
+
+    return metadata, feature_names, fold_medians, fold_means, fold_scales, models, modes
 
 
 def main() -> None:
@@ -80,21 +97,26 @@ def main() -> None:
     if not input_path.exists():
         raise FileNotFoundError(f"Test CSV not found: {input_path}")
 
-    metadata, arrays = load_model(Path(args.model_dir))
+    model_dir = Path(args.model_dir)
+    (
+        metadata,
+        feature_names,
+        fold_medians,
+        fold_means,
+        fold_scales,
+        models,
+        modes,
+    ) = load_ensemble(model_dir)
     seed = int(metadata["seed"])
-    set_global_seed(seed)  # prediction is deterministic; the seed is fixed anyway
-
-    feature_names = arrays["feature_names"].astype(str).tolist()
-    coefficients = arrays["coefficients"]
-    intercept = float(arrays["intercept"])
-    medians, means, scales = arrays["medians"], arrays["means"], arrays["scales"]
-    modes = dict(zip(arrays["categorical_columns"].astype(str), arrays["categorical_modes"].astype(str)))
+    set_global_seed(seed)
 
     data = pd.read_csv(input_path)
     if ID_COLUMN not in data.columns:
         raise ValueError(f"Test CSV must contain the identifier column {ID_COLUMN!r}")
     if data[ID_COLUMN].isna().any():
         raise ValueError(f"Identifier column {ID_COLUMN!r} contains missing values")
+
+    data = generate_features(data)
 
     # Report what had to be filled, so that the jury can see it.
     absent = ensure_columns(data, feature_names)
@@ -111,10 +133,15 @@ def main() -> None:
         print("No missing numeric feature values in input.")
 
     data = impute_categorical(data, {c: m for c, m in modes.items() if c in CATEGORICAL_COLUMNS})
-
     raw = numeric_matrix(data, feature_names)
-    transformed = transform_features(raw, medians, means, scales)
-    prediction = np.clip(100.0 * expit(transformed @ coefficients + intercept), 0.0, 100.0)
+
+    fold_predictions = np.zeros((len(models), len(data)), dtype=float)
+    for fold_index, model in enumerate(models):
+        transformed = transform_features(raw, fold_medians[fold_index], fold_means[fold_index], fold_scales[fold_index])
+        fold_predictions[fold_index] = model.predict(transformed)
+
+    ensemble_prediction = np.mean(fold_predictions, axis=0)
+    prediction = np.clip(ensemble_prediction, 0.0, 100.0)
     if not np.isfinite(prediction).all():
         raise ValueError("Model produced a non-finite prediction")
 
@@ -122,6 +149,7 @@ def main() -> None:
     output_path = Path(args.output_csv) if args.output_csv else Path(f"submission_seed_{seed}.csv")
     submission.to_csv(output_path, index=False, float_format="%.4f")
 
+    print(f"Folds averaged: {len(models)}")
     print(f"Rows written: {len(submission)}")
     print(f"Prediction range: {prediction.min():.4f} .. {prediction.max():.4f}")
     print(f"Saved submission: {output_path}")
