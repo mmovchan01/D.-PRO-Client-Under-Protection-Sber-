@@ -3,14 +3,14 @@
   "model_type": "sigmoid-linear index, fit by L-BFGS-B on raw-scale RMSE",
   "target": "protection_score",
   "prediction_formula": "100 * sigmoid(intercept + standardized_numeric_features @ coefficients)",
-  "seed": 42,
+  "seed": 434089,
   "training_rows": 10000,
   "validation_rows": 2000,
   "validation_size": 0.2,
-  "validation_rmse": 10.217832510879731,
+  "validation_rmse": 9.972019918131009,
   "cross_validation": {
     "folds": 5,
-    "oof_rmse": 10.158562626579375
+    "oof_rmse": 10.176646065300224
   },
   "features": [
     "age",
@@ -74,8 +74,8 @@
     "validation_fit": {
       "success": true,
       "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
-      "iterations": 25,
-      "objective": 51.07284675229558,
+      "iterations": 23,
+      "objective": 51.73220078606181,
       "l2_alpha": 10000.0,
       "initial_logit_ridge_alpha": 100.0
     },

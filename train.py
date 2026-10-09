@@ -1,7 +1,7 @@
 """Train the final sigmoid-linear protection-score regression model.
 
 Example:
-    python train.py --train-csv hard_train.csv --seed 42 --model-dir artifacts
+    python train.py --train-csv hard_train.csv --model-dir artifacts   # seed is drawn at random
 """
 
 from __future__ import annotations
@@ -42,8 +42,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--seed",
         type=int,
-        default=42,
-        help="Fixed random seed used for the validation split and submission name",
+        default=None,
+        help=(
+            "Random seed for the validation split and the submission name. "
+            "If omitted, a new random seed is drawn for every run."
+        ),
     )
     parser.add_argument(
         "--validation-size",
@@ -169,6 +172,11 @@ def main() -> None:
     if args.cv_folds == 1 or args.cv_folds < 0:
         raise ValueError("--cv-folds must be 0 or at least 2")
 
+    if args.seed is None:
+        # A new seed is drawn on every run; it is printed, stored in the
+        # metadata and written into the submission file name.
+        args.seed = random.SystemRandom().randrange(1, 1_000_000)
+    print(f"Using random seed: {args.seed}")
     random.seed(args.seed)
     np.random.seed(args.seed)
 
