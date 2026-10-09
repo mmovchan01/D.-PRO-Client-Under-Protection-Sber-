@@ -1,0 +1,8 @@
+{
+  "seed": 732805,
+  "model": "bagged sigmoid-linear: 100 * sigmoid(Xw + b), MSE loss",
+  "n_bags": 30,
+  "l2_lambda": 0.001,
+  "n_features": 88,
+  "train_file": "hard_train.csv"
+}
