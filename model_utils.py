@@ -68,39 +68,61 @@ def generate_features(data: pd.DataFrame) -> pd.DataFrame:
     """
     df = data.copy()
 
+    def _col(name: str) -> pd.Series | None:
+        if name not in df.columns:
+            return None
+        return pd.to_numeric(df[name], errors="coerce")
+
     # 1. Cross-interactions of risks and insurances
-    if "crime_rate" in df.columns and "property_insurance" in df.columns:
-        df["property_exposure"] = df["crime_rate"] * (1 - df["property_insurance"])
-    if "cyber_risk" in df.columns and "cyber_protection" in df.columns:
-        df["cyber_exposure"] = df["cyber_risk"] * (1 - df["cyber_protection"])
+    crime_rate = _col("crime_rate")
+    property_insurance = _col("property_insurance")
+    if crime_rate is not None and property_insurance is not None:
+        df["property_exposure"] = crime_rate * (1 - property_insurance)
+
+    cyber_risk = _col("cyber_risk")
+    cyber_protection = _col("cyber_protection")
+    if cyber_risk is not None and cyber_protection is not None:
+        df["cyber_exposure"] = cyber_risk * (1 - cyber_protection)
 
     # 2. Digital vulnerability index
+    digital_behavior_score = _col("digital_behavior_score")
+    password_manager = _col("password_manager")
+    two_factor_auth = _col("two_factor_auth")
+    security_training = _col("security_training")
     if (
-        "digital_behavior_score" in df.columns
-        and "password_manager" in df.columns
-        and "two_factor_auth" in df.columns
-        and "security_training" in df.columns
+        digital_behavior_score is not None
+        and password_manager is not None
+        and two_factor_auth is not None
+        and security_training is not None
     ):
-        df["cyber_vulnerability"] = df["digital_behavior_score"] * (
-            3 - (df["password_manager"] + df["two_factor_auth"] + df["security_training"])
+        df["cyber_vulnerability"] = digital_behavior_score * (
+            3 - (password_manager + two_factor_auth + security_training)
         )
 
     # 3. Financial leverage and credit load
-    if "average_balance" in df.columns and "income" in df.columns:
-        df["income_to_balance_ratio"] = df["average_balance"] / (df["income"] + 1)
-    if "loan_amount" in df.columns and "income" in df.columns:
-        df["credit_load_ratio"] = df["loan_amount"] / (df["income"] + 1)
+    average_balance = _col("average_balance")
+    income = _col("income")
+    loan_amount = _col("loan_amount")
+    if average_balance is not None and income is not None:
+        df["income_to_balance_ratio"] = average_balance / (income + 1)
+    if loan_amount is not None and income is not None:
+        df["credit_load_ratio"] = loan_amount / (income + 1)
 
     # 4. Digital and policy activity patterns
-    if "website_visits" in df.columns and "mobile_sessions" in df.columns:
-        df["digital_channel_ratio"] = df["website_visits"] / (df["mobile_sessions"] + 1)
-    if "active_policies" in df.columns and "expired_policies" in df.columns:
-        df["net_active_policies"] = df["active_policies"] - df["expired_policies"]
+    website_visits = _col("website_visits")
+    mobile_sessions = _col("mobile_sessions")
+    active_policies = _col("active_policies")
+    expired_policies = _col("expired_policies")
+    if website_visits is not None and mobile_sessions is not None:
+        df["digital_channel_ratio"] = website_visits / (mobile_sessions + 1)
+    if active_policies is not None and expired_policies is not None:
+        df["net_active_policies"] = active_policies - expired_policies
 
     # 5. Age patterns
-    if "age" in df.columns:
-        df["age_squared"] = df["age"] ** 2
-        df["is_young"] = (df["age"] < 25).astype(int)
+    age = _col("age")
+    if age is not None:
+        df["age_squared"] = age**2
+        df["is_young"] = (age < 25).astype(int)
 
     return df
 
