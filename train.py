@@ -1,13 +1,14 @@
-"""Train the conservative regularized CatBoost ensemble model on hard_train.csv.
+"""Train the conservative regularized CatBoost ensemble model on hard_train.csv with Huber loss.
 
-Model: 5-fold CatBoostRegressor ensemble with shallow trees (depth 4) and strong L2 leaf regularization.
+Model: 5-fold CatBoostRegressor ensemble with Huber loss ('Huber:delta=1.5'),
+       shallow trees (depth 4), and strong L2 leaf regularization (l2_leaf_reg=30).
 Training: 5-fold cross-validation with early stopping on each validation fold.
 
 What is saved to ``--model-dir``:
   * ``catboost_fold_{k}.cbm`` - CatBoost model weights for fold k;
-  * ``fold_preprocessors.npz`` - feature names, fold medians/means/scales, categorical modes;
+  * ``fold_preprocessors.npz`` - feature names, fold medians/means/scales, fold RMSEs, fold weights, categorical modes;
   * ``feature_coefficients.csv`` - average feature importances across folds;
-  * ``model_metadata.json`` - seed, feature list, fold models, hyperparameters, library versions.
+  * ``model_metadata.json`` - seed, feature list, fold models, hyperparameters, library versions, fold weights.
 
 Seed handling:
   * ``--seed N`` fixes the seed (the value is written to the metadata and to the
@@ -50,6 +51,7 @@ DEFAULT_LEARNING_RATE = 0.03
 DEFAULT_L2_LEAF_REG = 30.0
 DEFAULT_N_ESTIMATORS = 500
 DEFAULT_EARLY_STOPPING_ROUNDS = 50
+DEFAULT_LOSS_FUNCTION = "Huber:delta=1.5"
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +79,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_EARLY_STOPPING_ROUNDS,
         help="Early stopping rounds on validation fold",
+    )
+    parser.add_argument(
+        "--loss-function",
+        default=DEFAULT_LOSS_FUNCTION,
+        help="CatBoost loss function (e.g. Huber:delta=1.5)",
     )
     return parser.parse_args()
 
@@ -121,6 +128,7 @@ def main() -> None:
     fold_scales_list: list[np.ndarray] = []
     fold_model_files: list[str] = []
     fold_best_iterations: list[int] = []
+    fold_rmses: list[float] = []
     fold_importances = np.zeros(len(feature_names), dtype=float)
 
     oof_prediction = np.full(len(data), np.nan, dtype=float)
@@ -132,6 +140,8 @@ def main() -> None:
         f_x_validation = transform_features(raw_matrix[fold_validation], f_medians, f_means, f_scales)
 
         cb_model = CatBoostRegressor(
+            loss_function=args.loss_function,
+            eval_metric="RMSE",
             depth=args.depth,
             learning_rate=args.learning_rate,
             l2_leaf_reg=args.l2_leaf_reg,
@@ -163,20 +173,27 @@ def main() -> None:
         fold_scales_list.append(f_scales)
 
         fold_rmse = float(np.sqrt(np.mean((target[fold_validation] - fold_pred) ** 2)))
+        fold_rmses.append(fold_rmse)
         print(f"Completed CV fold {fold_number}/{args.cv_folds} (best iteration: {best_iter}, RMSE: {fold_rmse:.4f})")
 
     cross_validation_rmse = float(np.sqrt(np.mean((target - oof_prediction) ** 2)))
 
+    # Compute fold weights inversely proportional to validation RMSE
+    inv_rmses = 1.0 / np.asarray(fold_rmses, dtype=float)
+    fold_weights = (inv_rmses / np.sum(inv_rmses)).tolist()
+
     # Categorical modes (saved for completeness)
     categorical_modes = fit_categorical_modes(data, CATEGORICAL_COLUMNS)
 
-    # Save fold preprocessing parameters and feature info
+    # Save fold preprocessing parameters, RMSEs, weights and feature info
     np.savez_compressed(
         model_dir / "fold_preprocessors.npz",
         feature_names=np.asarray(feature_names, dtype=str),
         fold_medians=np.asarray(fold_medians_list, dtype=float),
         fold_means=np.asarray(fold_means_list, dtype=float),
         fold_scales=np.asarray(fold_scales_list, dtype=float),
+        fold_rmses=np.asarray(fold_rmses, dtype=float),
+        fold_weights=np.asarray(fold_weights, dtype=float),
         categorical_columns=np.asarray(list(categorical_modes.keys()), dtype=str),
         categorical_modes=np.asarray(list(categorical_modes.values()), dtype=str),
     )
@@ -195,15 +212,17 @@ def main() -> None:
     metadata = {
         "model_file": "fold_preprocessors.npz",
         "fold_model_files": fold_model_files,
-        "model_type": f"CatBoostRegressor {args.cv_folds}-fold ensemble (depth={args.depth}, l2_leaf_reg={args.l2_leaf_reg})",
+        "model_type": f"CatBoostRegressor {args.cv_folds}-fold ensemble (loss={args.loss_function}, depth={args.depth}, l2_leaf_reg={args.l2_leaf_reg})",
         "target": TARGET_COLUMN,
-        "prediction_formula": f"Average of {args.cv_folds} CatBoost fold models, clipped to [0, 100]",
+        "prediction_formula": f"Weighted average of {args.cv_folds} CatBoost fold models (weights inversely proportional to fold RMSE), clipped to [0, 100]",
         "seed": int(args.seed),
         "seed_policy": "fixed with --seed" if args.seed is not None else "random per run",
         "training_rows": int(len(data)),
         "cross_validation": {
             "folds": int(args.cv_folds),
             "oof_rmse": cross_validation_rmse,
+            "fold_rmses": fold_rmses,
+            "fold_weights": fold_weights,
             "fold_best_iterations": fold_best_iterations,
         },
         "features": feature_names,
@@ -213,6 +232,7 @@ def main() -> None:
             "categorical_used_by_model": False,
         },
         "hyperparameters": {
+            "loss_function": args.loss_function,
             "depth": args.depth,
             "learning_rate": args.learning_rate,
             "l2_leaf_reg": args.l2_leaf_reg,
@@ -233,6 +253,8 @@ def main() -> None:
         file.write("\n")
 
     print(f"\n{args.cv_folds}-fold OOF RMSE: {cross_validation_rmse:.4f}")
+    print(f"Fold RMSEs: {[round(r, 4) for r in fold_rmses]}")
+    print(f"Fold Weights: {[round(w, 4) for w in fold_weights]}")
     print(f"Numeric predictors: {len(feature_names)}")
     print(f"Saved {args.cv_folds} fold models and metadata to: {model_dir}")
 

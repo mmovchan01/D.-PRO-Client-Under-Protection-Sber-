@@ -54,10 +54,15 @@ def generate_features(data: pd.DataFrame) -> pd.DataFrame:
     2. Digital vulnerability index:
        - cyber_vulnerability = digital_behavior_score * (3 - (password_manager + two_factor_auth + security_training))
 
-    3. Financial leverage:
+    3. Financial leverage and credit load:
        - income_to_balance_ratio = average_balance / (income + 1)
+       - credit_load_ratio = loan_amount / (income + 1)
 
-    4. Age patterns:
+    4. Digital and policy activity patterns:
+       - digital_channel_ratio = website_visits / (mobile_sessions + 1)
+       - net_active_policies = active_policies - expired_policies
+
+    5. Age patterns:
        - age_squared = age ** 2
        - is_young = (age < 25).astype(int)
     """
@@ -80,11 +85,19 @@ def generate_features(data: pd.DataFrame) -> pd.DataFrame:
             3 - (df["password_manager"] + df["two_factor_auth"] + df["security_training"])
         )
 
-    # 3. Financial leverage
+    # 3. Financial leverage and credit load
     if "average_balance" in df.columns and "income" in df.columns:
         df["income_to_balance_ratio"] = df["average_balance"] / (df["income"] + 1)
+    if "loan_amount" in df.columns and "income" in df.columns:
+        df["credit_load_ratio"] = df["loan_amount"] / (df["income"] + 1)
 
-    # 4. Age patterns
+    # 4. Digital and policy activity patterns
+    if "website_visits" in df.columns and "mobile_sessions" in df.columns:
+        df["digital_channel_ratio"] = df["website_visits"] / (df["mobile_sessions"] + 1)
+    if "active_policies" in df.columns and "expired_policies" in df.columns:
+        df["net_active_policies"] = df["active_policies"] - df["expired_policies"]
+
+    # 5. Age patterns
     if "age" in df.columns:
         df["age_squared"] = df["age"] ** 2
         df["is_young"] = (df["age"] < 25).astype(int)

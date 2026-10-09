@@ -7,20 +7,34 @@
     "catboost_fold_3.cbm",
     "catboost_fold_4.cbm"
   ],
-  "model_type": "CatBoostRegressor 5-fold ensemble (depth=4, l2_leaf_reg=30.0)",
+  "model_type": "CatBoostRegressor 5-fold ensemble (loss=Huber:delta=1.5, depth=4, l2_leaf_reg=30.0)",
   "target": "protection_score",
-  "prediction_formula": "Average of 5 CatBoost fold models, clipped to [0, 100]",
+  "prediction_formula": "Weighted average of 5 CatBoost fold models (weights inversely proportional to fold RMSE), clipped to [0, 100]",
   "seed": 434089,
   "seed_policy": "fixed with --seed",
   "training_rows": 10000,
   "cross_validation": {
     "folds": 5,
-    "oof_rmse": 10.50108293040305,
+    "oof_rmse": 11.539262189993774,
+    "fold_rmses": [
+      11.362588981985558,
+      11.461858290080986,
+      11.998755472867876,
+      11.240282580796988,
+      11.61792366207563
+    ],
+    "fold_weights": [
+      0.2029540689145255,
+      0.20119631642043542,
+      0.19219357145096796,
+      0.20516242814367155,
+      0.19849361507039942
+    ],
     "fold_best_iterations": [
-      497,
-      498,
       499,
-      498,
+      499,
+      499,
+      499,
       499
     ]
   },
@@ -81,6 +95,9 @@
     "cyber_exposure",
     "cyber_vulnerability",
     "income_to_balance_ratio",
+    "credit_load_ratio",
+    "digital_channel_ratio",
+    "net_active_policies",
     "age_squared",
     "is_young"
   ],
@@ -98,6 +115,7 @@
     "categorical_used_by_model": false
   },
   "hyperparameters": {
+    "loss_function": "Huber:delta=1.5",
     "depth": 4,
     "learning_rate": 0.03,
     "l2_leaf_reg": 30.0,
