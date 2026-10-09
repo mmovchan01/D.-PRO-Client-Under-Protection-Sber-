@@ -20,6 +20,7 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 from scipy.special import expit, logit, ndtr, ndtri
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import RidgeCV
@@ -260,6 +261,86 @@ def main() -> None:
         "H9 the remaining error is irreducible logit noise",
         "supported" if abs(floors[-1][1] - np.sqrt(np.mean((100 * expit(eta) - y) ** 2))) < 0.5 else "unclear",
         "Bayes RMSE floor by sigma: " + ", ".join(f"{s:.3f} -> {f:.2f}" for s, f in floors),
+    )
+
+    # H10: income tail (wealth_segment=private, income > 300k) explains the gap to the floor?
+    # Oracle check: replace predictions on the tail by the true values and see how much RMSE moves.
+    final_oof = np.zeros(len(y))
+    for seed in [42]:
+        for train_idx, valid_idx in KFold(5, shuffle=True, random_state=seed).split(raw_matrix):
+            medians, means, scales = fit_preprocessor(raw_matrix[train_idx])
+            coefficients, intercept, _ = fit_sigmoid_index(
+                transform_features(raw_matrix[train_idx], medians, means, scales), y[train_idx]
+            )
+            final_oof[valid_idx] = 100.0 * expit(
+                transform_features(raw_matrix[valid_idx], medians, means, scales) @ coefficients + intercept
+            )
+    tail = (features["income"] > 300_000).to_numpy()
+    oracle = final_oof.copy()
+    oracle[tail] = y[tail]
+    base_rmse = float(np.sqrt(np.mean((final_oof - y) ** 2)))
+    oracle_rmse = float(np.sqrt(np.mean((oracle - y) ** 2)))
+    record(
+        "H10 income tail (income > 300k) is a large source of error",
+        "rejected" if base_rmse - oracle_rmse < 0.05 else "supported",
+        f"{int(tail.sum())} rows ({tail.mean():.2%}); perfect prediction there moves RMSE {base_rmse:.4f} -> {oracle_rmse:.4f}",
+    )
+
+    # H11: fractional logit (quasi-binomial GLM on y/100) instead of MSE on the 0-100 scale.
+    frac_scores = []
+    for seed in CV_SEEDS[:2]:
+        prediction = np.zeros(len(y))
+        for train_idx, valid_idx in KFold(5, shuffle=True, random_state=seed).split(raw_matrix):
+            medians, means, scales = fit_preprocessor(raw_matrix[train_idx])
+            a = np.column_stack([np.ones(len(train_idx)), transform_features(raw_matrix[train_idx], medians, means, scales)])
+            b = np.column_stack([np.ones(len(valid_idx)), transform_features(raw_matrix[valid_idx], medians, means, scales)])
+            target_share = y[train_idx] / 100.0
+
+            def objective(w: np.ndarray) -> tuple[float, np.ndarray]:
+                eta = a @ w
+                loss = np.mean(np.logaddexp(0.0, eta) - target_share * eta) + 0.5 * 1e-3 * np.dot(w[1:], w[1:])
+                grad = a.T @ (expit(eta) - target_share) / len(target_share)
+                grad[1:] += 1e-3 * w[1:]
+                return float(loss), grad
+
+            weights = minimize(objective, np.zeros(a.shape[1]), jac=True, method="L-BFGS-B").x
+            prediction[valid_idx] = 100.0 * expit(b @ weights)
+        frac_scores.append(float(np.sqrt(np.mean((prediction - y) ** 2))))
+    final_mean = float(np.sqrt(np.mean((final_oof - y) ** 2)))
+    record(
+        "H11 fractional logit (binomial GLM) beats MSE fit on 0-100 scale",
+        "rejected" if np.mean(frac_scores) > final_mean - 0.02 else "supported",
+        f"0-100 RMSE {np.mean(frac_scores):.4f} vs {final_mean:.4f} for the final model (difference within CV noise)",
+    )
+
+    # H12: collinearity. insurance_products is exactly the sum of the 8 flags.
+    flag_columns = [
+        "life_insurance", "property_insurance", "health_insurance", "travel_insurance",
+        "car_insurance", "gadget_insurance", "cyber_protection", "identity_protection",
+    ]
+    def impute(matrix: np.ndarray) -> np.ndarray:
+        return np.where(np.isfinite(matrix), matrix, np.nanmedian(matrix, axis=0))
+
+    raw_no_aggregate = numeric_matrix(features, [c for c in numeric if c != "insurance_products"])
+    raw_no_flags = numeric_matrix(features, [c for c in numeric if c not in flag_columns])
+    no_aggregate = impute(raw_no_aggregate)
+    no_flags = impute(raw_no_flags)
+    _, agg_runs = logit_resid_sd(no_aggregate, z, seeds=[42])
+    flags_mean, _ = logit_resid_sd(no_flags, z, seeds=[42])
+    no_aggregate_rmse = []
+    for train_idx, valid_idx in KFold(5, shuffle=True, random_state=42).split(raw_no_aggregate):
+        medians, means, scales = fit_preprocessor(raw_no_aggregate[train_idx])
+        coefficients, intercept, _ = fit_sigmoid_index(
+            transform_features(raw_no_aggregate[train_idx], medians, means, scales), y[train_idx]
+        )
+        no_aggregate_rmse.append(np.mean((100.0 * expit(
+            transform_features(raw_no_aggregate[valid_idx], medians, means, scales) @ coefficients + intercept
+        ) - y[valid_idx]) ** 2))
+    record(
+        "H12 drop the aggregate insurance_products (collinear with the 8 flags)",
+        "no effect" if abs(np.sqrt(np.mean(no_aggregate_rmse)) - final_mean) < 0.01 else "changes fit",
+        f"0-100 RMSE without aggregate {np.sqrt(np.mean(no_aggregate_rmse)):.4f} vs {final_mean:.4f}; "
+        f"dropping the flags instead is much worse (logit sd {flags_mean:.3f})",
     )
 
     lines = [

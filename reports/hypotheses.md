@@ -15,6 +15,9 @@ Yardstick: out-of-fold residual sd on the logit scale; baseline sigmoid-linear i
 | H7 test set comes from a different distribution than train | rejected | adversarial validation AUC 0.499 |
 | H8 another link function (probit) fits clearly better than logit | rejected | logit: raw RMSE 10.417; probit: raw RMSE 10.414; logit residuals are homoscedastic, probit residuals are not |
 | H9 the remaining error is irreducible logit noise | supported | Bayes RMSE floor by sigma: 0.400 -> 6.93, 0.500 -> 8.60, 0.600 -> 10.22, 0.611 -> 10.39 |
+| H10 income tail (income > 300k) is a large source of error | rejected | 46 rows (0.46%); perfect prediction there moves RMSE 10.1586 -> 10.1425 |
+| H11 fractional logit (binomial GLM) beats MSE fit on 0-100 scale | rejected | 0-100 RMSE 10.1609 vs 10.1586 for the final model (difference within CV noise) |
+| H12 drop the aggregate insurance_products (collinear with the 8 flags) | no effect | 0-100 RMSE without aggregate 10.1588 vs 10.1586; dropping the flags instead is much worse (logit sd 0.705) |
 
 Conclusion: no tested hypothesis lowers the logit noise below roughly 0.60, and the 0-100 RMSE was checked for every candidate that lowered it on the logit scale (H5).
 A logit-scale gain (H4, H5) does not transfer to the 0-100 scale, so decisions are made on the 0-100 RMSE.
