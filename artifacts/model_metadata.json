@@ -8,10 +8,10 @@
   "training_rows": 10000,
   "validation_rows": 2000,
   "validation_size": 0.2,
-  "validation_rmse": 9.972019918131009,
+  "validation_rmse": 9.981689575163506,
   "cross_validation": {
     "folds": 5,
-    "oof_rmse": 10.176646065300224
+    "oof_rmse": 10.178926951407217
   },
   "features": [
     "age",
@@ -65,7 +65,13 @@
     "regional_risk",
     "crime_rate",
     "natural_disaster_risk",
-    "cyber_risk"
+    "cyber_risk",
+    "property_exposure",
+    "cyber_exposure",
+    "cyber_vulnerability",
+    "income_to_balance_ratio",
+    "age_squared",
+    "is_young"
   ],
   "imputation": {
     "numeric": "median of training data",
@@ -81,23 +87,23 @@
     "categorical_used_by_model": false
   },
   "parameters": {
-    "feature_count": 52,
+    "feature_count": 58,
     "l2_alpha": 10000.0,
     "initial_logit_ridge_alpha": 100.0,
     "optimizer": "L-BFGS-B",
     "validation_fit": {
       "success": true,
       "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
-      "iterations": 23,
-      "objective": 51.73220078606181,
+      "iterations": 65,
+      "objective": 51.64970695238321,
       "l2_alpha": 10000.0,
       "initial_logit_ridge_alpha": 100.0
     },
     "final_fit": {
       "success": true,
       "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
-      "iterations": 24,
-      "objective": 51.219365027668275,
+      "iterations": 68,
+      "objective": 51.163299425490166,
       "l2_alpha": 10000.0,
       "initial_logit_ridge_alpha": 100.0
     }

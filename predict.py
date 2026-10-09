@@ -28,6 +28,7 @@ from model_utils import (
     ID_COLUMN,
     TARGET_COLUMN,
     ensure_columns,
+    generate_features,
     impute_categorical,
     numeric_matrix,
     set_global_seed,
@@ -95,6 +96,8 @@ def main() -> None:
         raise ValueError(f"Test CSV must contain the identifier column {ID_COLUMN!r}")
     if data[ID_COLUMN].isna().any():
         raise ValueError(f"Identifier column {ID_COLUMN!r} contains missing values")
+
+    data = generate_features(data)
 
     # Report what had to be filled, so that the jury can see it.
     absent = ensure_columns(data, feature_names)

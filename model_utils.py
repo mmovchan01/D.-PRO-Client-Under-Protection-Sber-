@@ -44,6 +44,61 @@ def set_global_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
+def generate_features(data: pd.DataFrame) -> pd.DataFrame:
+    """Generate domain-specific engineered features.
+
+    1. Cross-interactions of risks and insurances:
+       - property_exposure = crime_rate * (1 - property_insurance)
+       - cyber_exposure = cyber_risk * (1 - cyber_protection)
+
+    2. Digital vulnerability index:
+       - cyber_vulnerability = digital_behavior_score * (3 - (password_manager + two_factor_auth + security_training))
+
+    3. Financial leverage:
+       - income_to_balance_ratio = average_balance / (income + 1)
+
+    4. Age patterns:
+       - age_squared = age ** 2
+       - is_young = (age < 25).astype(int)
+    """
+    df = data.copy()
+
+    # 1. Cross-interactions of risks and insurances
+    if "crime_rate" in df.columns and "property_insurance" in df.columns:
+        df["property_exposure"] = df["crime_rate"] * (1 - df["property_insurance"])
+    if "cyber_risk" in df.columns and "cyber_protection" in df.columns:
+        df["cyber_exposure"] = df["cyber_risk"] * (1 - df["cyber_protection"])
+
+    # 2. Digital vulnerability index
+    if (
+        "digital_behavior_score" in df.columns
+        and "password_manager" in df.columns
+        and "two_factor_auth" in df.columns
+        and "security_training" in df.columns
+    ):
+        df["cyber_vulnerability"] = df["digital_behavior_score"] * (
+            3 - (df["password_manager"] + df["two_factor_auth"] + df["security_training"])
+        )
+
+    # 3. Financial leverage
+    if "average_balance" in df.columns and "income" in df.columns:
+        df["income_to_balance_ratio"] = df["average_balance"] / (df["income"] + 1)
+
+    # 4. Age patterns
+    if "age" in df.columns:
+        df["age_squared"] = df["age"] ** 2
+        df["is_young"] = (df["age"] < 25).astype(int)
+
+    return df
+
+
+# Aliases for flexibility
+engineer_features = generate_features
+create_features = generate_features
+add_features = generate_features
+add_engineered_features = generate_features
+
+
 def get_numeric_feature_names(data: pd.DataFrame) -> list[str]:
     """Return numeric predictor columns, excluding the ID and the target."""
     excluded = {ID_COLUMN, TARGET_COLUMN}

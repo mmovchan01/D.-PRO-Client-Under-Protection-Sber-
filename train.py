@@ -41,6 +41,7 @@ from model_utils import (
     TARGET_COLUMN,
     fit_categorical_modes,
     fit_preprocessor,
+    generate_features,
     get_numeric_feature_names,
     logits_to_score,
     numeric_matrix,
@@ -177,6 +178,8 @@ def main() -> None:
     if not data[TARGET_COLUMN].between(0.0, 100.0).all():
         raise ValueError(f"Training target {TARGET_COLUMN!r} must lie in [0, 100]")
 
+    data = generate_features(data)
+
     feature_names = get_numeric_feature_names(data)
     if not feature_names:
         raise ValueError("No numeric predictor columns were found")
@@ -234,6 +237,15 @@ def main() -> None:
         categorical_columns=np.asarray(list(categorical_modes.keys()), dtype=str),
         categorical_modes=np.asarray(list(categorical_modes.values()), dtype=str),
     )
+
+    coefficients_df = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "standardized_coefficient": coefficients,
+            "absolute_coefficient": np.abs(coefficients),
+        }
+    ).sort_values("absolute_coefficient", ascending=False)
+    coefficients_df.to_csv(model_dir / "feature_coefficients.csv", index=False)
 
     metadata = {
         "model_file": MODEL_FILENAME,
