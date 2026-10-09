@@ -79,7 +79,7 @@ python experiments.py --train-csv hard_train.csv --output reports/experiments.md
 - `experiments.py` — сравнение моделей на одинаковых фолдах.
 - `hypotheses.py` — проверка гипотез о скрытой структуре в данных (`reports/hypotheses.md`).
 - `artifacts/` — веса, метаданные (seed, версии, признаки, метрики), коэффициенты.
-- `reports/` — результаты EDA и экспериментов.
+- `reports/` — результаты EDA и экспериментов; `reports/data_audit.md` — аудит пропусков и устойчивость предсказания.
 - `submission_seed_{SEED}.csv` — предсказания для открытого тестового набора.
 
 ## Перед сдачей
