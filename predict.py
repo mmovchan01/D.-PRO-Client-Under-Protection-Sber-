@@ -1,11 +1,10 @@
 """Predict protection_score with the saved CatBoost ensemble model. No training happens here.
 
 What it does:
-  1. loads the fold models, preprocessing arrays, and validation weights saved by ``train.py``;
+  1. loads the fold models and preprocessing arrays saved by ``train.py``;
   2. generates engineered domain features on the test data;
   3. handles missing features by filling with saved training medians;
-  4. computes predictions from all fold models and performs a weighted average
-     (where models with smaller validation RMSE get proportionally higher weight);
+  4. computes predictions from all fold models and averages them (ensemble);
   5. clips predictions to [0, 100] and writes ``submission_seed_{SEED}.csv``.
 
 Examples:
@@ -56,11 +55,10 @@ def load_ensemble(
     np.ndarray,
     np.ndarray,
     np.ndarray,
-    np.ndarray,
     list[CatBoostRegressor],
     dict[str, str],
 ]:
-    """Return metadata, feature names, preprocessing parameters, fold weights, fold models, and categorical modes."""
+    """Return metadata, feature names, preprocessing parameters, fold models, and categorical modes."""
     metadata_path = model_dir / "model_metadata.json"
     if not metadata_path.exists():
         raise FileNotFoundError(f"Model metadata not found: {metadata_path}; run train.py first")
@@ -75,13 +73,6 @@ def load_ensemble(
         fold_medians = saved["fold_medians"]
         fold_means = saved["fold_means"]
         fold_scales = saved["fold_scales"]
-        if "fold_weights" in saved:
-            fold_weights = saved["fold_weights"]
-        elif "fold_rmses" in saved:
-            inv_r = 1.0 / saved["fold_rmses"]
-            fold_weights = inv_r / np.sum(inv_r)
-        else:
-            fold_weights = np.ones(len(fold_medians), dtype=float) / len(fold_medians)
         modes = dict(zip(saved["categorical_columns"].astype(str), saved["categorical_modes"].astype(str)))
 
     if feature_names != metadata["features"]:
@@ -97,7 +88,7 @@ def load_ensemble(
         cb.load_model(str(model_path))
         models.append(cb)
 
-    return metadata, feature_names, fold_medians, fold_means, fold_scales, fold_weights, models, modes
+    return metadata, feature_names, fold_medians, fold_means, fold_scales, models, modes
 
 
 def main() -> None:
@@ -113,7 +104,6 @@ def main() -> None:
         fold_medians,
         fold_means,
         fold_scales,
-        fold_weights,
         models,
         modes,
     ) = load_ensemble(model_dir)
@@ -150,11 +140,8 @@ def main() -> None:
         transformed = transform_features(raw, fold_medians[fold_index], fold_means[fold_index], fold_scales[fold_index])
         fold_predictions[fold_index] = model.predict(transformed)
 
-    # Weighted ensemble prediction
-    weights = np.asarray(fold_weights, dtype=float)
-    weights = weights / np.sum(weights)
-    weighted_prediction = np.sum(fold_predictions * weights[:, np.newaxis], axis=0)
-    prediction = np.clip(weighted_prediction, 0.0, 100.0)
+    ensemble_prediction = np.mean(fold_predictions, axis=0)
+    prediction = np.clip(ensemble_prediction, 0.0, 100.0)
     if not np.isfinite(prediction).all():
         raise ValueError("Model produced a non-finite prediction")
 
@@ -162,8 +149,7 @@ def main() -> None:
     output_path = Path(args.output_csv) if args.output_csv else Path(f"submission_seed_{seed}.csv")
     submission.to_csv(output_path, index=False, float_format="%.4f")
 
-    print(f"Folds combined: {len(models)}")
-    print(f"Fold weights applied: {[round(float(w), 4) for w in weights]}")
+    print(f"Folds averaged: {len(models)}")
     print(f"Rows written: {len(submission)}")
     print(f"Prediction range: {prediction.min():.4f} .. {prediction.max():.4f}")
     print(f"Saved submission: {output_path}")
