@@ -1,7 +1,23 @@
-"""Train the final sigmoid-linear protection-score regression model.
+"""Train the final sigmoid-linear protection-score model on hard_train.csv.
+
+Model: protection_score = 100 * sigmoid(intercept + standardized_features @ coefficients)
+Fit: MSE on the original 0-100 scale (L-BFGS-B, small L2 penalty).
+
+What is saved to ``--model-dir``:
+  * ``protection_score_logistic.npz`` - coefficients, intercept, numeric
+    medians/means/scales, categorical columns and their modes;
+  * ``model_metadata.json`` - seed, feature list, metrics, library versions.
+
+Seed handling:
+  * ``--seed N`` fixes the seed (the value is written to the metadata and to the
+    submission file name by ``predict.py``);
+  * without ``--seed`` a new random seed is drawn and printed, as the task rules
+    require. The final weights do not depend on the seed: the optimizer is
+    deterministic and the final fit uses all labeled rows. The seed only affects
+    the validation split and the CV folds, which are reported metrics.
 
 Example:
-    python train.py --train-csv hard_train.csv --model-dir artifacts   # seed is drawn at random
+    python train.py --train-csv hard_train.csv --model-dir artifacts --seed 434089
 """
 
 from __future__ import annotations
@@ -21,11 +37,14 @@ from scipy.special import expit
 from sklearn.model_selection import KFold, train_test_split
 
 from model_utils import (
+    CATEGORICAL_COLUMNS,
     TARGET_COLUMN,
+    fit_categorical_modes,
     fit_preprocessor,
     get_numeric_feature_names,
     logits_to_score,
     numeric_matrix,
+    set_global_seed,
     target_to_logit,
     transform_features,
 )
@@ -36,17 +55,14 @@ INITIAL_LOGIT_RIDGE_ALPHA = 100.0
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--train-csv", default="hard_train.csv", help="Path to labeled training CSV")
     parser.add_argument("--model-dir", default="artifacts", help="Directory for model and metadata")
     parser.add_argument(
         "--seed",
         type=int,
         default=None,
-        help=(
-            "Random seed for the validation split and the submission name. "
-            "If omitted, a new random seed is drawn for every run."
-        ),
+        help="Fixed seed. If omitted, a new random seed is drawn and printed.",
     )
     parser.add_argument(
         "--validation-size",
@@ -70,11 +86,10 @@ def fit_sigmoid_index(
     l2_alpha: float = L2_ALPHA,
     initialization_alpha: float = INITIAL_LOGIT_RIDGE_ALPHA,
 ) -> tuple[np.ndarray, float, dict[str, float | int | bool | str]]:
-    """Fit score = 100 * sigmoid(intercept + X @ coefficients).
+    """Fit score = 100 * sigmoid(intercept + X @ coefficients) by raw-scale MSE.
 
-    The objective is mean squared error on the original 0-100 scale, with a
-    small L2 penalty. A ridge model on the logit-transformed target provides a
-    deterministic starting point for the nonlinear optimization.
+    A ridge model on the logit-transformed target gives a deterministic starting
+    point, so the result does not depend on random initialization.
     """
     x = np.asarray(features, dtype=float)
     y = np.asarray(target, dtype=float)
@@ -86,20 +101,16 @@ def fit_sigmoid_index(
     n_rows, n_features = x.shape
     target_logit = target_to_logit(y)
 
-    # Ridge initialization, with an unpenalized intercept.
+    # Ridge initialization with an unpenalized intercept.
     x_mean = x.mean(axis=0)
     y_mean = target_logit.mean()
     centered_x = x - x_mean
     centered_y = target_logit - y_mean
     gram = centered_x.T @ centered_x
     right_hand_side = centered_x.T @ centered_y
-    initial_coefficients = np.linalg.solve(
-        gram + initialization_alpha * np.eye(n_features), right_hand_side
-    )
+    initial_coefficients = np.linalg.solve(gram + initialization_alpha * np.eye(n_features), right_hand_side)
     initial_intercept = float(y_mean - x_mean @ initial_coefficients)
-    initial_parameters = np.concatenate(
-        [initial_coefficients, np.asarray([initial_intercept])]
-    )
+    initial_parameters = np.concatenate([initial_coefficients, np.asarray([initial_intercept])])
 
     penalty = l2_alpha / n_rows
 
@@ -110,17 +121,10 @@ def fit_sigmoid_index(
         prediction = 100.0 * probability
         residual = prediction - y
 
-        loss = 0.5 * np.mean(residual**2) + 0.5 * penalty * np.dot(
-            coefficients, coefficients
-        )
-        derivative_wrt_logit = (
-            residual * 100.0 * probability * (1.0 - probability) / n_rows
-        )
+        loss = 0.5 * np.mean(residual**2) + 0.5 * penalty * np.dot(coefficients, coefficients)
+        derivative_wrt_logit = residual * 100.0 * probability * (1.0 - probability) / n_rows
         gradient = np.concatenate(
-            [
-                x.T @ derivative_wrt_logit + penalty * coefficients,
-                np.asarray([derivative_wrt_logit.sum()]),
-            ]
+            [x.T @ derivative_wrt_logit + penalty * coefficients, np.asarray([derivative_wrt_logit.sum()])]
         )
         return float(loss), gradient
 
@@ -129,12 +133,7 @@ def fit_sigmoid_index(
         initial_parameters,
         method="L-BFGS-B",
         jac=True,
-        options={
-            "maxiter": 5000,
-            "ftol": 1e-12,
-            "gtol": 1e-9,
-            "maxls": 50,
-        },
+        options={"maxiter": 5000, "ftol": 1e-12, "gtol": 1e-9, "maxls": 50},
     )
     if not np.isfinite(result.x).all():
         raise RuntimeError("Optimization produced non-finite model parameters")
@@ -152,19 +151,6 @@ def fit_sigmoid_index(
     return result.x[:n_features], float(result.x[n_features]), diagnostics
 
 
-def train_model(
-    data: pd.DataFrame,
-    feature_names: list[str],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, dict[str, float | int | bool | str]]:
-    raw = numeric_matrix(data, feature_names)
-    medians, means, scales = fit_preprocessor(raw)
-    transformed = transform_features(raw, medians, means, scales)
-    coefficients, intercept, diagnostics = fit_sigmoid_index(
-        transformed, data[TARGET_COLUMN].astype(float).to_numpy()
-    )
-    return medians, means, scales, coefficients, intercept, diagnostics
-
-
 def main() -> None:
     args = parse_args()
     if not 0.0 < args.validation_size < 1.0:
@@ -173,12 +159,11 @@ def main() -> None:
         raise ValueError("--cv-folds must be 0 or at least 2")
 
     if args.seed is None:
-        # A new seed is drawn on every run; it is printed, stored in the
-        # metadata and written into the submission file name.
         args.seed = random.SystemRandom().randrange(1, 1_000_000)
-    print(f"Using random seed: {args.seed}")
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+        print(f"No --seed given; drawn random seed: {args.seed}")
+    else:
+        print(f"Fixed seed: {args.seed}")
+    set_global_seed(args.seed)
 
     train_path = Path(args.train_csv)
     if not train_path.exists():
@@ -198,72 +183,42 @@ def main() -> None:
     raw_matrix = numeric_matrix(data, feature_names)
     target = data[TARGET_COLUMN].astype(float).to_numpy()
 
+    # Holdout check: imputation and scaling are fit on the training part only.
     train_indices, validation_indices = train_test_split(
-        np.arange(len(data)),
-        test_size=args.validation_size,
-        random_state=args.seed,
-        shuffle=True,
+        np.arange(len(data)), test_size=args.validation_size, random_state=args.seed, shuffle=True
     )
+    v_medians, v_means, v_scales = fit_preprocessor(raw_matrix[train_indices])
+    v_x_train = transform_features(raw_matrix[train_indices], v_medians, v_means, v_scales)
+    v_x = transform_features(raw_matrix[validation_indices], v_medians, v_means, v_scales)
+    v_coefficients, v_intercept, validation_diagnostics = fit_sigmoid_index(v_x_train, target[train_indices])
+    validation_prediction = logits_to_score(v_x @ v_coefficients + v_intercept)
+    validation_rmse = float(np.sqrt(np.mean((target[validation_indices] - validation_prediction) ** 2)))
 
-    # Validation and model selection use only rows from hard_train.csv.
-    validation_medians, validation_means, validation_scales = fit_preprocessor(
-        raw_matrix[train_indices]
-    )
-    validation_x_train = transform_features(
-        raw_matrix[train_indices],
-        validation_medians,
-        validation_means,
-        validation_scales,
-    )
-    validation_x = transform_features(
-        raw_matrix[validation_indices],
-        validation_medians,
-        validation_means,
-        validation_scales,
-    )
-    validation_coefficients, validation_intercept, validation_diagnostics = (
-        fit_sigmoid_index(validation_x_train, target[train_indices])
-    )
-    validation_prediction = logits_to_score(
-        validation_x @ validation_coefficients + validation_intercept
-    )
-    validation_rmse = float(
-        np.sqrt(np.mean((target[validation_indices] - validation_prediction) ** 2))
-    )
-
-    # Out-of-fold estimates provide a second check that the holdout result is not
-    # unusually favorable. Every fold is trained from hard_train.csv only.
+    # Out-of-fold check. Each fold refits preprocessing and the model on its own
+    # training part, so the held-out rows are never used for fitting.
     cross_validation_rmse = None
     if args.cv_folds >= 2:
         if args.cv_folds > len(data):
             raise ValueError("--cv-folds cannot exceed the number of training rows")
         oof_prediction = np.full(len(data), np.nan, dtype=float)
         splitter = KFold(n_splits=args.cv_folds, shuffle=True, random_state=args.seed)
-        for fold_number, (fold_train, fold_validation) in enumerate(
-            splitter.split(raw_matrix), start=1
-        ):
-            fold_medians, fold_means, fold_scales = fit_preprocessor(
-                raw_matrix[fold_train]
-            )
-            fold_x_train = transform_features(
-                raw_matrix[fold_train], fold_medians, fold_means, fold_scales
-            )
-            fold_x_validation = transform_features(
-                raw_matrix[fold_validation], fold_medians, fold_means, fold_scales
-            )
-            fold_coefficients, fold_intercept, _ = fit_sigmoid_index(
-                fold_x_train, target[fold_train]
-            )
-            oof_prediction[fold_validation] = logits_to_score(
-                fold_x_validation @ fold_coefficients + fold_intercept
-            )
+        for fold_number, (fold_train, fold_validation) in enumerate(splitter.split(raw_matrix), start=1):
+            f_medians, f_means, f_scales = fit_preprocessor(raw_matrix[fold_train])
+            f_x_train = transform_features(raw_matrix[fold_train], f_medians, f_means, f_scales)
+            f_x_validation = transform_features(raw_matrix[fold_validation], f_medians, f_means, f_scales)
+            f_coefficients, f_intercept, _ = fit_sigmoid_index(f_x_train, target[fold_train])
+            oof_prediction[fold_validation] = logits_to_score(f_x_validation @ f_coefficients + f_intercept)
             print(f"Completed CV fold {fold_number}/{args.cv_folds}")
         cross_validation_rmse = float(np.sqrt(np.mean((target - oof_prediction) ** 2)))
 
-    # Refit the selected, low-parameter model on every labeled row.
-    medians, means, scales, coefficients, intercept, final_diagnostics = train_model(
-        data, feature_names
-    )
+    # Final model: fit on all labeled rows.
+    medians, means, scales = fit_preprocessor(raw_matrix)
+    x_all = transform_features(raw_matrix, medians, means, scales)
+    coefficients, intercept, final_diagnostics = fit_sigmoid_index(x_all, target)
+
+    # Imputation values for categorical columns (stored for robustness; the
+    # numeric model does not read them).
+    categorical_modes = fit_categorical_modes(data, CATEGORICAL_COLUMNS)
 
     model_dir = Path(args.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -276,16 +231,8 @@ def main() -> None:
         scales=scales,
         coefficients=coefficients,
         intercept=np.asarray(intercept, dtype=float),
-    )
-
-    pd.DataFrame(
-        {
-            "feature": feature_names,
-            "standardized_coefficient": coefficients,
-            "absolute_coefficient": np.abs(coefficients),
-        }
-    ).sort_values("absolute_coefficient", ascending=False).to_csv(
-        model_dir / "feature_coefficients.csv", index=False
+        categorical_columns=np.asarray(list(categorical_modes.keys()), dtype=str),
+        categorical_modes=np.asarray(list(categorical_modes.values()), dtype=str),
     )
 
     metadata = {
@@ -294,15 +241,18 @@ def main() -> None:
         "target": TARGET_COLUMN,
         "prediction_formula": "100 * sigmoid(intercept + standardized_numeric_features @ coefficients)",
         "seed": int(args.seed),
+        "seed_policy": "fixed with --seed" if args.seed is not None else "random per run",
         "training_rows": int(len(data)),
         "validation_rows": int(len(validation_indices)),
         "validation_size": float(args.validation_size),
         "validation_rmse": validation_rmse,
-        "cross_validation": {
-            "folds": int(args.cv_folds),
-            "oof_rmse": cross_validation_rmse,
-        },
+        "cross_validation": {"folds": int(args.cv_folds), "oof_rmse": cross_validation_rmse},
         "features": feature_names,
+        "imputation": {
+            "numeric": "median of training data",
+            "categorical": categorical_modes,
+            "categorical_used_by_model": False,
+        },
         "parameters": {
             "feature_count": int(len(feature_names)),
             "l2_alpha": L2_ALPHA,

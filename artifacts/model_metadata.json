@@ -4,6 +4,7 @@
   "target": "protection_score",
   "prediction_formula": "100 * sigmoid(intercept + standardized_numeric_features @ coefficients)",
   "seed": 434089,
+  "seed_policy": "fixed with --seed",
   "training_rows": 10000,
   "validation_rows": 2000,
   "validation_size": 0.2,
@@ -66,6 +67,19 @@
     "natural_disaster_risk",
     "cyber_risk"
   ],
+  "imputation": {
+    "numeric": "median of training data",
+    "categorical": {
+      "region": "Moscow",
+      "city_type": "large_city",
+      "gender": "M",
+      "education": "bachelor",
+      "family_status": "married",
+      "employment": "employed",
+      "wealth_segment": "mass"
+    },
+    "categorical_used_by_model": false
+  },
   "parameters": {
     "feature_count": 52,
     "l2_alpha": 10000.0,

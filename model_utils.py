@@ -1,6 +1,22 @@
-"""Utilities for the sigmoid-linear protection-score model."""
+"""Shared helpers for the sigmoid-linear protection-score model.
+
+Used by both ``train.py`` and ``predict.py`` so that feature handling is
+identical in training and prediction:
+
+* numeric predictors are converted to floats; any non-finite value becomes NaN;
+* NaNs are filled with the medians learned on the training data;
+* numeric predictors are standardized with training means and scales;
+* categorical columns get modes learned on the training data (stored with the
+  model, filled in when missing). The current model uses numeric predictors
+  only, because categorical dummies did not improve the out-of-fold RMSE in
+  ``reports/experiments.md``; the categorical imputation is kept so that a
+  future model can use these columns safely.
+"""
 
 from __future__ import annotations
+
+import os
+import random
 
 import numpy as np
 import pandas as pd
@@ -9,9 +25,27 @@ from scipy.special import expit
 ID_COLUMN = "customer_id"
 TARGET_COLUMN = "protection_score"
 
+# Categorical columns from the task description (object dtype in the CSV files).
+CATEGORICAL_COLUMNS = [
+    "region",
+    "city_type",
+    "gender",
+    "education",
+    "family_status",
+    "employment",
+    "wealth_segment",
+]
+
+
+def set_global_seed(seed: int) -> None:
+    """Fix every random generator that might be used (Python, NumPy, hashing)."""
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
 
 def get_numeric_feature_names(data: pd.DataFrame) -> list[str]:
-    """Return numeric predictor columns, excluding IDs and the label."""
+    """Return numeric predictor columns, excluding the ID and the target."""
     excluded = {ID_COLUMN, TARGET_COLUMN}
     return [
         column
@@ -21,20 +55,34 @@ def get_numeric_feature_names(data: pd.DataFrame) -> list[str]:
 
 
 def numeric_matrix(data: pd.DataFrame, feature_names: list[str]) -> np.ndarray:
-    """Convert named predictors to a float matrix; non-finite values become NaN."""
-    missing = [column for column in feature_names if column not in data.columns]
-    if missing:
-        raise ValueError(
-            "Input data is missing required feature columns: " + ", ".join(missing)
-        )
+    """Convert named numeric predictors to a float matrix.
+
+    Values that cannot be parsed as numbers (for example the text ``"n/a"``)
+    and infinite values become NaN, so that they are imputed like any gap.
+    Missing columns are not allowed here; see ``ensure_columns``.
+    """
     frame = data[feature_names].apply(pd.to_numeric, errors="coerce")
     matrix = frame.to_numpy(dtype=float)
     matrix[~np.isfinite(matrix)] = np.nan
     return matrix
 
 
+def ensure_columns(
+    data: pd.DataFrame, columns: list[str], *, fill_value: float = np.nan
+) -> list[str]:
+    """Add absent columns in place, filled with NaN, and return their names.
+
+    A missing column is treated as a column that is entirely missing, so that
+    the saved median is used for every row instead of raising an error.
+    """
+    absent = [column for column in columns if column not in data.columns]
+    for column in absent:
+        data[column] = fill_value
+    return absent
+
+
 def fit_preprocessor(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Fit median imputation and standardization, returning their parameters."""
+    """Learn median imputation and standardization parameters from a matrix."""
     values = np.asarray(matrix, dtype=float)
     if values.ndim != 2 or values.shape[0] == 0 or values.shape[1] == 0:
         raise ValueError("Expected a non-empty two-dimensional feature matrix")
@@ -43,6 +91,7 @@ def fit_preprocessor(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     for column_index in range(values.shape[1]):
         column = values[:, column_index]
         finite = column[np.isfinite(column)]
+        # A column that is entirely NaN in training gets 0 as a neutral fallback.
         medians[column_index] = np.median(finite) if finite.size else 0.0
 
     imputed = np.where(np.isfinite(values), values, medians)
@@ -58,13 +107,38 @@ def transform_features(
     means: np.ndarray,
     scales: np.ndarray,
 ) -> np.ndarray:
-    """Apply the saved imputation and standardization parameters."""
+    """Impute with saved medians, then standardize with saved parameters."""
     values = np.asarray(matrix, dtype=float)
     imputed = np.where(np.isfinite(values), values, medians)
     transformed = (imputed - means) / scales
     if not np.isfinite(transformed).all():
         raise ValueError("Feature preprocessing produced non-finite values")
     return transformed
+
+
+def fit_categorical_modes(data: pd.DataFrame, columns: list[str]) -> dict[str, str]:
+    """Most frequent non-missing value per categorical column (ties: alphabetical)."""
+    modes: dict[str, str] = {}
+    for column in columns:
+        if column not in data.columns:
+            continue
+        counts = data[column].dropna().astype(str).value_counts()
+        if counts.empty:
+            continue
+        top = counts[counts == counts.max()].index.sort_values()
+        modes[column] = str(top[0])
+    return modes
+
+
+def impute_categorical(data: pd.DataFrame, modes: dict[str, str]) -> pd.DataFrame:
+    """Fill missing categorical values with saved modes (in a copy of ``data``)."""
+    filled = data.copy()
+    for column, mode in modes.items():
+        if column not in filled.columns:
+            filled[column] = mode
+        else:
+            filled[column] = filled[column].where(filled[column].notna(), mode)
+    return filled
 
 
 def target_to_logit(target: np.ndarray) -> np.ndarray:
@@ -75,5 +149,5 @@ def target_to_logit(target: np.ndarray) -> np.ndarray:
 
 
 def logits_to_score(logits: np.ndarray) -> np.ndarray:
-    """Convert model logits to valid protection percentages."""
+    """Convert model logits to valid protection percentages in [0, 100]."""
     return 100.0 * expit(np.asarray(logits, dtype=float))
