@@ -1,4 +1,9 @@
-"""Hypotheses: numeric ID, row index, region x city_type groups (run from repo root)."""
+"""Гипотезы: числовой ID, номер строки, группы region x city_type (запуск из корня репозитория).
+
+Проверяет: корреляции ID/номера строки с целью (нет связи), циклические зависимости
+от ID с периодами 2..200 (случайный шум) и статистики цели по 32 группам
+region x city_type (нет групп с нулевой дисперсией). См. RESULTS.md.
+"""
 import numpy as np, pandas as pd
 from scipy.stats import pearsonr, spearmanr
 

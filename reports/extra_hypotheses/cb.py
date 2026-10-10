@@ -1,3 +1,10 @@
+"""Черновик: CatBoost на ВСЕХ признаках (включая текст как категории). Запуск из корня.
+
+Обучает CatBoost (3000 итераций, глубина 6, ранняя остановка 200) в 5 фолдах,
+печатает RMSE фолдов и общий OOF RMSE (~10.38), затем показывает топ-25
+важности признаков. Вывод: не лучше линейной модели на зашумлённом train.
+См. RESULTS.md.
+"""
 import pandas as pd, numpy as np
 from sklearn.model_selection import KFold
 from catboost import CatBoostRegressor

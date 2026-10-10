@@ -1,3 +1,9 @@
+"""Черновик: модели на ЛОГИТ-шкале цели (ridge / LightGBM / kernel ridge). Запуск из корня.
+
+Текст -> one-hot, пропуски -> медианы + флаги '_na'. Для каждой модели печатает
+разброс остатков на логитах и RMSE на шкале 0-100. Вывод: всё упирается в ~10.25.
+См. RESULTS.md.
+"""
 import pandas as pd, numpy as np, lightgbm as lgb
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.linear_model import RidgeCV

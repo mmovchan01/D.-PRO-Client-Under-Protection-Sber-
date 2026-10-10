@@ -1,3 +1,9 @@
+"""Черновик: символьная регрессия (gplearn) на топ-5 признаках. Запуск из корня.
+
+Сравнивает обычную линейную регрессию и генетический поиск формулы.
+ВНИМАНИЕ: требует библиотеку gplearn (в requirements её нет — ставится отдельно:
+pip install gplearn). Вывод: формула не лучше линейной (13.20 vs 13.10). См. RESULTS.md.
+"""
 import numpy as np, pandas as pd, warnings
 warnings.filterwarnings("ignore")
 from gplearn.genetic import SymbolicRegressor

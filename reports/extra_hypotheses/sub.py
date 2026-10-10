@@ -1,3 +1,9 @@
+"""Черновик: линейные/полиномиальные модели на подмножествах признаков. Запуск из корня.
+
+Сравнивает линейную регрессию и полином 2-й степени на топ-5 и топ-15 признаках,
+затем LightGBM на всех числовых и на топ-5. Вывод: сигнал распределён по многим
+признакам, топ-5 мало (RMSE ~12.7-13.4). См. RESULTS.md.
+"""
 import pandas as pd, numpy as np, lightgbm as lgb
 from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.linear_model import RidgeCV, LinearRegression

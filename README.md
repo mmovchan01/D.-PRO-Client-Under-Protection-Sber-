@@ -58,6 +58,32 @@ python eda.py --train-csv hard_train.csv --test-csv hard_test.csv --output-dir r
 python experiments.py --train-csv hard_train.csv --output reports/experiments.md
 ```
 
+## Ноутбуки для новичка (папка `notebooks/`)
+
+Если вы впервые видите этот проект — начните с ноутбуков: в каждом объяснения
+простыми словами и комментарий к каждой строке кода. Порядок:
+
+| № | Ноутбук | О чём |
+| --- | --- | --- |
+| 00 | `notebooks/00_quickstart.ipynb` | Быстрый старт за 5 минут |
+| 01 | `notebooks/01_data_overview.ipynb` | Смотрим на CSV глазами |
+| 02 | `notebooks/02_eda.ipynb` | Графики и связи с целью |
+| 03 | `notebooks/03_feature_engineering.ipynb` | Новые признаки и обработка пропусков |
+| 04 | `notebooks/04_train_catboost.ipynb` | Как обучается модель |
+| 05 | `notebooks/05_predict_submission.ipynb` | Как делаются предсказания |
+| 06 | `notebooks/06_experiments.ipynb` | Сравнение моделей: почему CatBoost |
+
+Запуск:
+
+```bash
+python -m pip install -r requirements-dev.txt  # включает jupyter
+python -m jupyter lab  # и открыть любой файл из notebooks/
+```
+
+Ноутбуки безопасны: демо-модели обучаются в памяти, файлы пишутся только в `/tmp`,
+папка `artifacts/` не изменяется. Весь код `.py`-файлов также прокомментирован
+построчно на русском — читайте `model_utils.py`, `train.py`, `predict.py` как продолжение ноутбуков.
+
 ## Данные: ключевые наблюдения EDA
 
 - Пропуски: `house_value` (~47%), `car_value` (~41%), `average_claim_cost` (~40%). Это не совпадает с описанием задачи (~62% и ~58%), поэтому признаки следует считать по фактическим данным.
